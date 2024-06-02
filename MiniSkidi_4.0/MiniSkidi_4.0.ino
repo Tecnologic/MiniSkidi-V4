@@ -21,8 +21,8 @@
 #define bucketServoPin 23
 #define clawServoPin 22
 
-#define auxLights0 18
-#define auxLights1 5
+#define auxLights0 16
+#define auxLights1 17
 #define servoDelayIterations 20
 
 int8_t rightMotorReverse = 1;
@@ -47,7 +47,7 @@ volatile int clawServoMax = 140;
 volatile int clawServoMin = 10;
 volatile int clawServoValue = (clawServoMax + clawServoMin) / 2;
 
-volatile bool auxLightsOn = false;
+volatile bool auxLightsOn = true;
 volatile int moveClawServoSpeed = 0;
 volatile int moveBucketServoSpeed = 0;
 
@@ -128,7 +128,7 @@ void processGamepad(ControllerPtr ctl) {
   if (ctl->thumbR()) {
     if (!auxLightsOn) {
       digitalWrite(auxLights0, HIGH);
-      digitalWrite(auxLights1, LOW);
+      digitalWrite(auxLights1, HIGH);
       auxLightsOn = true;
     } else {
       digitalWrite(auxLights0, LOW);
@@ -173,6 +173,8 @@ void setup() {
 
   pinMode(auxLights0, OUTPUT);
   pinMode(auxLights1, OUTPUT);
+  digitalWrite(auxLights0, HIGH);
+  digitalWrite(auxLights1, HIGH);
 
   bucketServo.attach(bucketServoPin);
   clawServo.attach(clawServoPin);
