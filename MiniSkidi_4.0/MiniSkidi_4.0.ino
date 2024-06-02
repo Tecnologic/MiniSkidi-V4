@@ -23,7 +23,6 @@
 
 #define auxLights0 16
 #define auxLights1 17
-#define servoDelayIterations 20
 
 int8_t rightMotorReverse = 1;
 int8_t leftMotorReverse = 1;
@@ -35,13 +34,13 @@ Cdrv8833 armMotor;
 Servo bucketServo;
 Servo clawServo;
 
-volatile int bucketServoDelay = 10;
+volatile int bucketServoDelay = 7;
 volatile unsigned long bucketServoLastMove = 0;
 volatile int bucketServoMax = 135;
 volatile int bucketServoMin = 10;
 volatile int bucketServoValue = bucketServoMax;
 
-volatile int clawServoDelay = 10;
+volatile int clawServoDelay = 7;
 volatile unsigned long clawServoLastMove = 0;
 volatile int clawServoMax = 140;
 volatile int clawServoMin = 10;
