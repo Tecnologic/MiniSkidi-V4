@@ -36,7 +36,7 @@ Servo clawServo;
 
 volatile int bucketServoDelay = 7;
 volatile unsigned long bucketServoLastMove = 0;
-volatile int bucketServoMax = 135;
+volatile int bucketServoMax = 170;
 volatile int bucketServoMin = 10;
 volatile int bucketServoValue = bucketServoMax;
 
@@ -44,11 +44,17 @@ volatile int clawServoDelay = 7;
 volatile unsigned long clawServoLastMove = 0;
 volatile int clawServoMax = 140;
 volatile int clawServoMin = 10;
-volatile int clawServoValue = (clawServoMax + clawServoMin) / 2;
+volatile int clawServoValue = clawServoMax;
 
 volatile bool auxLightsOn = true;
 volatile int moveClawServoSpeed = 0;
 volatile int moveBucketServoSpeed = 0;
+
+volatile unsigned long lastWiggleTime = 0;
+volatile int wiggleCount = 0;
+volatile int wiggleDirection = 1;
+unsigned long wiggleDelay = 100;
+volatile bool shouldWiggle = false;
 
 ControllerPtr controller;
 
@@ -60,6 +66,7 @@ void onConnectedController(ControllerPtr ctl) {
     Serial.printf("Controller model: %s, VID=0x%04x, PID=0x%04x\n", ctl->getModelName().c_str(), properties.vendor_id, properties.product_id);
     controller = ctl;
     ctl->setColorLED(255, 0, 0);
+    shouldWiggle = true;
     ctl->playDualRumble(0 /* delayedStartMs */, 250 /* durationMs */, 0x80 /* weakMagnitude */, 0x40 /* strongMagnitude */);
   } else {
     Serial.println("CALLBACK: Controller connected, but could not found empty slot");
@@ -124,6 +131,10 @@ void processGamepad(ControllerPtr ctl) {
     moveBucketServoSpeed = -1;
   }
 
+  if (ctl->a()) {
+    shouldWiggle = true;
+  }
+
   if (ctl->thumbR()) {
     if (!auxLightsOn) {
       digitalWrite(auxLights0, HIGH);
@@ -182,11 +193,31 @@ void setup() {
   clawServo.write(clawServoValue);
 }
 
+void wiggle() {
+  unsigned long currentTime = millis();
+  if (abs((int)(currentTime - lastWiggleTime)) >= wiggleDelay) {
+    lastWiggleTime = currentTime;
+    wiggleDirection = -wiggleDirection;
+    wiggleCount++;
+    rightMotor.move(wiggleDirection * 100);
+    leftMotor.move(-1 * wiggleDirection * 100);
+    if (wiggleCount >= 10) {
+      rightMotor.brake();
+      leftMotor.brake();
+      wiggleCount = 0;
+      shouldWiggle = false;
+    }
+  }
+}
+
 void loop() {
   unsigned long currentTime = millis();
   bool dataUpdated = BP32.update();
   if (dataUpdated) {
     processControllers();
+  }
+  if (shouldWiggle) {
+    wiggle();
   }
   if (moveClawServoSpeed != 0) {
     if (currentTime - clawServoLastMove >= clawServoDelay) {
