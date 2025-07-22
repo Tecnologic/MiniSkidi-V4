@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <ESP32Servo.h>
 #include <Bluepad32.h>
 #include "Cdrv8833.h"
 
@@ -24,6 +23,10 @@
 #define auxLights0 16
 #define auxLights1 17
 
+#define drvEnable 27
+
+
+
 int8_t rightMotorReverse = 1;
 int8_t leftMotorReverse = 1;
 int8_t armMotorReverse = 1;
@@ -31,32 +34,38 @@ Cdrv8833 rightMotor;
 Cdrv8833 leftMotor;
 Cdrv8833 armMotor;
 
-Servo bucketServo;
-Servo clawServo;
 
-volatile int bucketServoDelay = 7;
-volatile unsigned long bucketServoLastMove = 0;
-volatile int bucketServoMax = 170;
-volatile int bucketServoMin = 10;
-volatile int bucketServoValue = bucketServoMax;
+constexpr int bucketServoMax = 1800;  // Maximum pulse width for bucket servo in microseconds
+constexpr int bucketServoMin = 1200;  // Minimum pulse width for bucket servo in microseconds
+int bucketServoValue = bucketServoMax;  // Initial value for bucket servo
 
-volatile int clawServoDelay = 7;
-volatile unsigned long clawServoLastMove = 0;
-volatile int clawServoMax = 140;
-volatile int clawServoMin = 10;
-volatile int clawServoValue = clawServoMax;
+constexpr int clawServoMax = 1500;    // Maximum pulse width for claw servo in microseconds
+constexpr int clawServoMin = 1200;   // Minimum pulse width for claw servo in microseconds
+int clawServoValue = clawServoMax;    // Initial value for claw servo
 
 volatile bool auxLightsOn = true;
-volatile int moveClawServoSpeed = 0;
-volatile int moveBucketServoSpeed = 0;
 
 volatile unsigned long lastWiggleTime = 0;
 volatile int wiggleCount = 0;
 volatile int wiggleDirection = 1;
 unsigned long wiggleDelay = 100;
 volatile bool shouldWiggle = false;
+volatile bool yPressed = false;
 
 ControllerPtr controller;
+
+void bucketServoWrite(int value) {
+  // Convert the value to a range suitable for the servo
+  int servoValue = map(value, 0, 20000, 0, 65535);
+  ledcWrite(0, servoValue);
+}
+
+void clawServoWrite(int value) {
+  // Convert the value to a range suitable for the servo
+  int servoValue = map(value, 0, 20000, 0, 65535);
+  ledcWrite(1, servoValue);
+}
+
 
 // This callback gets called any time a new gamepad is connected.
 void onConnectedController(ControllerPtr ctl) {
@@ -68,6 +77,8 @@ void onConnectedController(ControllerPtr ctl) {
     ctl->setColorLED(255, 0, 0);
     shouldWiggle = true;
     ctl->playDualRumble(0 /* delayedStartMs */, 250 /* durationMs */, 0x80 /* weakMagnitude */, 0x40 /* strongMagnitude */);
+    digitalWrite(drvEnable, HIGH);
+
   } else {
     Serial.println("CALLBACK: Controller connected, but could not found empty slot");
   }
@@ -77,74 +88,92 @@ void onDisconnectedController(ControllerPtr ctl) {
   if (controller == ctl) {
     Serial.printf("CALLBACK: Controller disconnected");
     controller = nullptr;
+    rightMotor.stop();
+    leftMotor.stop();
+    armMotor.stop();
+    bucketServoWrite(bucketServoValue);
+    clawServoWrite(clawServoValue);
+    digitalWrite(auxLights0, LOW);
+    digitalWrite(auxLights1, LOW);
+    digitalWrite(drvEnable, LOW);
   } else {
     Serial.println("CALLBACK: Controller disconnected, but not found in myControllers");
   }
+
 }
 
 void processGamepad(ControllerPtr ctl) {
   int LXValue = ctl->axisX();
   int LYValue = ctl->axisY();
-  int8_t driveInput = -map(LYValue, -512, 511, -100, 100);
-  int8_t steeringInput = map(LXValue, -512, 511, -100, 100);
 
-  int8_t leftMotorSpeed = max(min(driveInput - steeringInput, 100), -100);
-  int8_t rightMotorSpeed = max(min(driveInput + steeringInput, 100), -100);
+  if (abs(LXValue) > 20 || abs(LYValue) > 20)
+  {
+    int8_t driveInput = -map(LYValue, -512, 511, -100, 100);
+    int8_t steeringInput = map(LXValue, -512, 511, -100, 100);
 
-  leftMotor.move(leftMotorSpeed);
-  rightMotor.move(rightMotorSpeed);
-  if (LXValue > -2 && LXValue < 2 && LYValue > -2 && LYValue < 2) {
+    int8_t leftMotorSpeed = max(min(driveInput - steeringInput, 100), -100);
+    int8_t rightMotorSpeed = max(min(driveInput + steeringInput, 100), -100);
+
+    leftMotor.move(leftMotorSpeed);
+    rightMotor.move(rightMotorSpeed);
+  }
+  else
+  {
     // Stick centered, stop movement
     rightMotor.stop();
     leftMotor.stop();
   }
 
-  int RXValue = (ctl->axisRX());
   int RYValue = (ctl->axisRY());
-  if (abs(RXValue) + abs(RYValue) > 2) {
+  if (abs(RYValue) > 20) {
     int8_t armSpeed = map(RYValue, -512, 511, -100, 100);
     armMotor.move(armSpeed);
   }
-  if (RYValue > -30 && RYValue < 30) {
+  else{
     armMotor.stop();
   }
 
-  // Check shoulder to move claw
-  if (ctl->l1() && ctl->r1() || !ctl->l1() && !ctl->r1()) {
-    moveClawServoSpeed = 0;
+  int RXValue = (ctl->axisRX());
+  if (abs(RXValue) > 20) {
+    int8_t bucketSpeed = map(RXValue, -512, 511, -10, 10);
+    bucketServoValue += bucketSpeed;
+    bucketServoValue = max(min(bucketServoValue, bucketServoMax), bucketServoMin);
+    Serial.printf("RXValue: %d, Bucket Speed: %d, Bucket Servo Value: %d\n", RXValue, bucketSpeed, bucketServoValue);
   }
-  if (ctl->l1()) {
-    moveClawServoSpeed = 1;
-  }
-  if (ctl->r1()) {
-    moveClawServoSpeed = -1;
-  }
+  bucketServoWrite(bucketServoValue);
 
-  // Check throttle to move bucket
-  if (ctl->l2() && ctl->r2() || !ctl->l2() && !ctl->r2()) {
-    moveBucketServoSpeed = 0;
+  int ThrottleValue = ctl->throttle();
+  int BrakeValue = ctl->brake();
+  if (abs(ThrottleValue) > 20 || abs(BrakeValue) > 20) {
+    int8_t clawSpeed = map(ThrottleValue, 0, 1024, -10, 10) - map(BrakeValue, 0, 1024, -10, 10);
+    clawServoValue += clawSpeed;
+    clawServoValue = max(min(clawServoValue, clawServoMax), clawServoMin);
+    Serial.printf("ThrottleValue: %d, BrakeValue: %d, Claw Speed: %d, Claw Servo Value: %d\n", ThrottleValue, BrakeValue, clawSpeed, clawServoValue);
   }
-  if (ctl->l2()) {
-    moveBucketServoSpeed = 1;
-  }
-  if (ctl->r2()) {
-    moveBucketServoSpeed = -1;
-  }
+  clawServoWrite(clawServoValue);
 
   if (ctl->a()) {
     shouldWiggle = true;
   }
 
-  if (ctl->thumbR()) {
-    if (!auxLightsOn) {
+  if (ctl->y() && !yPressed)
+  {
+    yPressed = true;
+
+    if (!auxLightsOn)
+    {
       digitalWrite(auxLights0, HIGH);
       digitalWrite(auxLights1, HIGH);
       auxLightsOn = true;
-    } else {
+    }
+    else
+    {
       digitalWrite(auxLights0, LOW);
       digitalWrite(auxLights1, LOW);
       auxLightsOn = false;
     }
+  } else if (!ctl->y() && yPressed) {
+    yPressed = false;
   }
 }
 
@@ -158,9 +187,15 @@ void processControllers() {
   }
 }
 
+
+
 void setup() {
 
+  
   Serial.begin(115200);
+  Serial.setDebugOutput(true);
+
+  Serial.println("MiniSkidi 4.0 starting...");
   Serial.printf("Firmware: %s\n", BP32.firmwareVersion());
   const uint8_t* addr = BP32.localBdAddress();
   Serial.printf("BD Addr: %2X:%2X:%2X:%2X:%2X:%2X\n", addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
@@ -168,9 +203,6 @@ void setup() {
   BP32.setup(&onConnectedController, &onDisconnectedController);
   BP32.forgetBluetoothKeys();
   BP32.enableVirtualDevice(false);
-
-
-  Serial.println("Ready.");
 
   rightMotor.init(rightMotor0, rightMotor1, 5);
   rightMotor.setDecayMode(drv8833DecaySlow);
@@ -183,14 +215,24 @@ void setup() {
 
   pinMode(auxLights0, OUTPUT);
   pinMode(auxLights1, OUTPUT);
+  pinMode(drvEnable, OUTPUT);
+  
   digitalWrite(auxLights0, HIGH);
   digitalWrite(auxLights1, HIGH);
+  digitalWrite(drvEnable, LOW);
 
-  bucketServo.attach(bucketServoPin);
-  clawServo.attach(clawServoPin);
+  pinMode(bucketServoPin, OUTPUT);
+  pinMode(clawServoPin, OUTPUT);
+  ledcSetup(0, 50, 16); // Set up PWM for servos
+  ledcSetup(1, 50, 16); // Set up PWM for servos
 
-  bucketServo.write(bucketServoValue);
-  clawServo.write(clawServoValue);
+  ledcAttachPin(bucketServoPin, 0);
+  ledcAttachPin(clawServoPin, 1);
+
+  bucketServoWrite(bucketServoValue);
+  clawServoWrite(clawServoValue);
+
+  Serial.println("Ready.");
 }
 
 void wiggle() {
@@ -218,25 +260,5 @@ void loop() {
   }
   if (shouldWiggle) {
     wiggle();
-  }
-  if (moveClawServoSpeed != 0) {
-    if (currentTime - clawServoLastMove >= clawServoDelay) {
-      clawServoLastMove = currentTime;
-      int newClawServoValue = clawServoValue + moveClawServoSpeed;
-      if (newClawServoValue >= clawServoMin && newClawServoValue <= clawServoMax) {
-        clawServoValue = newClawServoValue;
-        clawServo.write(clawServoValue);
-      }
-    }
-  }
-  if (moveBucketServoSpeed != 0) {
-    if (currentTime - bucketServoLastMove > bucketServoDelay) {
-      bucketServoLastMove = currentTime;
-      int newBucketServoValue = bucketServoValue + moveBucketServoSpeed;
-      if (newBucketServoValue >= bucketServoMin && newBucketServoValue <= bucketServoMax) {
-        bucketServoValue = newBucketServoValue;
-        bucketServo.write(bucketServoValue);
-      }
-    }
   }
 }

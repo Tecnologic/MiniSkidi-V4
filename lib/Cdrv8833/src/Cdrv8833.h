@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 // default values
-#define PWM_FREQUENCY    5000 // 1 - 50000 Hz
+#define PWM_FREQUENCY    16000 // 1 - 50000 Hz
 #define PWM_BIT_RESOLUTION  8 // pwm bit resolution
 
 // https://learn.adafruit.com/improve-brushed-dc-motor-performance/choosing-decay-mode-and-pwm-frequency
