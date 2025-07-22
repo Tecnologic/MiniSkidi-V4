@@ -35,12 +35,14 @@ Cdrv8833 leftMotor;
 Cdrv8833 armMotor;
 
 
-constexpr int bucketServoMax = 1800;  // Maximum pulse width for bucket servo in microseconds
-constexpr int bucketServoMin = 1200;  // Minimum pulse width for bucket servo in microseconds
+constexpr int bucketServoMax = 2000;  // Maximum pulse width for bucket servo in microseconds
+constexpr int bucketServoMin = 1000;  // Minimum pulse width for bucket servo in microseconds
+int bucketServoSpeed = 0;  // Speed for bucket servo, can be adjusted based on input
 int bucketServoValue = bucketServoMax;  // Initial value for bucket servo
 
-constexpr int clawServoMax = 1500;    // Maximum pulse width for claw servo in microseconds
-constexpr int clawServoMin = 1200;   // Minimum pulse width for claw servo in microseconds
+constexpr int clawServoMax = 2000;    // Maximum pulse width for claw servo in microseconds
+constexpr int clawServoMin = 1000;   // Minimum pulse width for claw servo in microseconds
+int clawServoSpeed = 0;  // Speed for claw servo, can be adjusted based on input
 int clawServoValue = clawServoMax;    // Initial value for claw servo
 
 volatile bool auxLightsOn = true;
@@ -56,13 +58,19 @@ ControllerPtr controller;
 
 void bucketServoWrite(int value) {
   // Convert the value to a range suitable for the servo
-  int servoValue = map(value, 0, 20000, 0, 65535);
+  int servoValue = map(value, 0, 20000, 0, 65535); // 20000 is the max pulse width in microseconds for 50Hz PWM
+  // Ensure the value is within the range of 0 to 65535 for 16-bit PWM
+  servoValue = constrain(servoValue, 0, 65535);
+  // Write the value to the LEDC channel for the bucket servo
   ledcWrite(0, servoValue);
 }
 
 void clawServoWrite(int value) {
   // Convert the value to a range suitable for the servo
-  int servoValue = map(value, 0, 20000, 0, 65535);
+  int servoValue = map(value, 0, 20000, 0, 65535); // 20000 is the max pulse width in microseconds for 50Hz PWM
+  // Ensure the value is within the range of 0 to 65535 for 16-bit PWM
+  servoValue = constrain(servoValue, 0, 65535);
+  // Write the value to the LEDC channel for the claw servo
   ledcWrite(1, servoValue);
 }
 
@@ -91,6 +99,8 @@ void onDisconnectedController(ControllerPtr ctl) {
     rightMotor.stop();
     leftMotor.stop();
     armMotor.stop();
+    bucketServoSpeed = 0;
+    clawServoSpeed = 0;
     bucketServoWrite(bucketServoValue);
     clawServoWrite(clawServoValue);
     digitalWrite(auxLights0, LOW);
@@ -135,22 +145,20 @@ void processGamepad(ControllerPtr ctl) {
 
   int RXValue = (ctl->axisRX());
   if (abs(RXValue) > 20) {
-    int8_t bucketSpeed = map(RXValue, -512, 511, -10, 10);
-    bucketServoValue += bucketSpeed;
-    bucketServoValue = max(min(bucketServoValue, bucketServoMax), bucketServoMin);
-    Serial.printf("RXValue: %d, Bucket Speed: %d, Bucket Servo Value: %d\n", RXValue, bucketSpeed, bucketServoValue);
+    bucketServoSpeed = map(RXValue, -512, 511, -100, 100);
   }
-  bucketServoWrite(bucketServoValue);
+  else {
+    bucketServoSpeed = 0;
+  }
 
   int ThrottleValue = ctl->throttle();
   int BrakeValue = ctl->brake();
   if (abs(ThrottleValue) > 20 || abs(BrakeValue) > 20) {
-    int8_t clawSpeed = map(ThrottleValue, 0, 1024, -10, 10) - map(BrakeValue, 0, 1024, -10, 10);
-    clawServoValue += clawSpeed;
-    clawServoValue = max(min(clawServoValue, clawServoMax), clawServoMin);
-    Serial.printf("ThrottleValue: %d, BrakeValue: %d, Claw Speed: %d, Claw Servo Value: %d\n", ThrottleValue, BrakeValue, clawSpeed, clawServoValue);
+    clawServoSpeed = map(ThrottleValue, 0, 1024, 0, 100) - map(BrakeValue, 0, 1024, 0, 100);
   }
-  clawServoWrite(clawServoValue);
+  else {
+    clawServoSpeed = 0;
+  }
 
   if (ctl->a()) {
     shouldWiggle = true;
@@ -260,5 +268,26 @@ void loop() {
   }
   if (shouldWiggle) {
     wiggle();
+  }
+
+  if (currentTime % 10 == 0)
+  {
+    constexpr int tmpMultiplier = 100; // For converting servo values to 1/100 microseconds
+
+    static int tmpBucketServoValue = bucketServoMax;
+    static int tmpClawServoValue = clawServoMax;
+    // Update bucket and claw servo values based on speed
+    tmpBucketServoValue += bucketServoSpeed;
+    tmpBucketServoValue = constrain(tmpBucketServoValue, bucketServoMin * tmpMultiplier, bucketServoMax * tmpMultiplier);
+
+    tmpClawServoValue += clawServoSpeed;
+    tmpClawServoValue = constrain(tmpClawServoValue, clawServoMin * tmpMultiplier, clawServoMax * tmpMultiplier);
+    // Write the updated values to the servos
+    bucketServoValue = tmpBucketServoValue / tmpMultiplier;
+    clawServoValue = tmpClawServoValue / tmpMultiplier;
+    bucketServoValue = constrain(bucketServoValue, bucketServoMin, bucketServoMax);
+    clawServoValue = constrain(clawServoValue, clawServoMin, clawServoMax);
+    bucketServoWrite(bucketServoValue);
+    clawServoWrite(clawServoValue);
   }
 }
