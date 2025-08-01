@@ -23,9 +23,11 @@
 #define auxLights0 16
 #define auxLights1 17
 
-#define drvEnable 27
+#define batteryPin 34 // ADC pin for battery voltage measurement
 
 
+constexpr int32_t minBatteryVoltage = 6600; // Minimum battery voltage in millivolts (6,6V = 2S LiPo fully discharged)
+constexpr int32_t warnBatteryVoltage = 7000; // Warning battery voltage in millivolts (7,0V = 2S LiPo low warning threshold)
 
 int8_t rightMotorReverse = 1;
 int8_t leftMotorReverse = 1;
@@ -38,7 +40,7 @@ Cdrv8833 armMotor;
 constexpr int bucketServoMax = 2000;  // Maximum pulse width for bucket servo in microseconds
 constexpr int bucketServoMin = 1000;  // Minimum pulse width for bucket servo in microseconds
 int bucketServoSpeed = 0;  // Speed for bucket servo, can be adjusted based on input
-int bucketServoValue = bucketServoMax;  // Initial value for bucket servo
+int bucketServoValue = bucketServoMin;  // Initial value for bucket servo
 
 constexpr int clawServoMax = 2000;    // Maximum pulse width for claw servo in microseconds
 constexpr int clawServoMin = 1000;   // Minimum pulse width for claw servo in microseconds
@@ -85,7 +87,6 @@ void onConnectedController(ControllerPtr ctl) {
     ctl->setColorLED(255, 0, 0);
     shouldWiggle = true;
     ctl->playDualRumble(0 /* delayedStartMs */, 250 /* durationMs */, 0x80 /* weakMagnitude */, 0x40 /* strongMagnitude */);
-    digitalWrite(drvEnable, HIGH);
 
   } else {
     Serial.println("CALLBACK: Controller connected, but could not found empty slot");
@@ -105,7 +106,6 @@ void onDisconnectedController(ControllerPtr ctl) {
     clawServoWrite(clawServoValue);
     digitalWrite(auxLights0, LOW);
     digitalWrite(auxLights1, LOW);
-    digitalWrite(drvEnable, LOW);
   } else {
     Serial.println("CALLBACK: Controller disconnected, but not found in myControllers");
   }
@@ -196,6 +196,15 @@ void processControllers() {
 }
 
 
+int32_t readBatteryVoltage() {
+  constexpr int32_t adcMaxValue = 4095; // ESP32 ADC max value for 12-bit resolution
+  constexpr int32_t adcMaxVoltage = 3300 * (13000 + 4700) / 4700; // 3300 mV reference voltage, voltage divider with 12k and 4.7k resistors
+  // Read the battery voltage from the ADC pin
+  int rawValue = analogRead(batteryPin);
+
+  return (rawValue * adcMaxVoltage / adcMaxValue); // Convert ADC value to voltage in millivolts
+}
+
 
 void setup() {
 
@@ -223,11 +232,9 @@ void setup() {
 
   pinMode(auxLights0, OUTPUT);
   pinMode(auxLights1, OUTPUT);
-  pinMode(drvEnable, OUTPUT);
   
   digitalWrite(auxLights0, HIGH);
   digitalWrite(auxLights1, HIGH);
-  digitalWrite(drvEnable, LOW);
 
   pinMode(bucketServoPin, OUTPUT);
   pinMode(clawServoPin, OUTPUT);
@@ -239,6 +246,8 @@ void setup() {
 
   bucketServoWrite(bucketServoValue);
   clawServoWrite(clawServoValue);
+
+  pinMode(batteryPin, ANALOG); // Set up battery pin as analog input
 
   Serial.println("Ready.");
 }
@@ -268,6 +277,46 @@ void loop() {
   }
   if (shouldWiggle) {
     wiggle();
+  }
+
+  int32_t batteryVolts = readBatteryVoltage();
+
+  if (currentTime % 1000 == 0) {
+    Serial.printf("Battery voltage: %d mV\n", batteryVolts);
+  }
+
+  if (batteryVolts < warnBatteryVoltage)
+  {
+    // Blink aux lights to indicate low battery
+    if (currentTime % 500 < 250)
+    {
+      digitalWrite(auxLights0, HIGH);
+      digitalWrite(auxLights1, HIGH);
+    }
+    else
+    {
+      digitalWrite(auxLights0, LOW);
+      digitalWrite(auxLights1, LOW);
+    }
+
+    if (batteryVolts < minBatteryVoltage)
+    {
+      if (currentTime % 500 == 0)
+      {
+        Serial.println("Battery voltage is low, stopping motors and servos.");
+      }
+      rightMotor.stop();
+      leftMotor.stop();
+      armMotor.stop();
+      bucketServoSpeed = 0;
+      clawServoSpeed = 0;
+      bucketServoWrite(bucketServoValue);
+      clawServoWrite(clawServoValue);
+    }
+    else if (currentTime % 500 == 0)
+    {
+      Serial.printf("Warning: Battery voltage is low (%d mV), consider recharging.\n", batteryVolts);
+    }
   }
 
   if (currentTime % 10 == 0)
