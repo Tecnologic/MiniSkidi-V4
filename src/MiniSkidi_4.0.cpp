@@ -40,12 +40,12 @@ Cdrv8833 armMotor;
 constexpr int bucketServoMax = 2000;  // Maximum pulse width for bucket servo in microseconds
 constexpr int bucketServoMin = 1000;  // Minimum pulse width for bucket servo in microseconds
 int bucketServoSpeed = 0;  // Speed for bucket servo, can be adjusted based on input
-int bucketServoValue = bucketServoMin;  // Initial value for bucket servo
+int bucketServoValue = bucketServoMax;  // Initial value for bucket servo
 
 constexpr int clawServoMax = 2000;    // Maximum pulse width for claw servo in microseconds
 constexpr int clawServoMin = 1000;   // Minimum pulse width for claw servo in microseconds
 int clawServoSpeed = 0;  // Speed for claw servo, can be adjusted based on input
-int clawServoValue = clawServoMax;    // Initial value for claw servo
+int clawServoValue = clawServoMin;    // Initial value for claw servo
 
 volatile bool auxLightsOn = true;
 
@@ -195,16 +195,27 @@ void processControllers() {
   }
 }
 
-
-int32_t readBatteryVoltage() {
-  constexpr int32_t adcMaxValue = 4095; // ESP32 ADC max value for 12-bit resolution
+int32_t readBatteryVoltage()
+{
+  constexpr int32_t adcMaxValue = 4095;                           // ESP32 ADC max value for 12-bit resolution
   constexpr int32_t adcMaxVoltage = 3300 * (13000 + 4700) / 4700; // 3300 mV reference voltage, voltage divider with 12k and 4.7k resistors
+  constexpr int32_t filterFactor = 64;                            // Filter factor for smoothing the battery voltage reading
+  constexpr int32_t filterOrder = 2;                              // Number of filter stages (2 stages for smoothing)
+  static int32_t filter[filterOrder + 1] = {0};                   // Array to store intermediate filter values
+
   // Read the battery voltage from the ADC pin
   int rawValue = analogRead(batteryPin);
 
-  return (rawValue * adcMaxVoltage / adcMaxValue); // Convert ADC value to voltage in millivolts
-}
+  filter[0] = rawValue * adcMaxVoltage / adcMaxValue; // Convert ADC value to voltage in millivolts
 
+  for (int32_t i = 1; i <= filterOrder; i++)
+  {
+    // Apply a multi-stage low-pass filter to smooth the battery voltage reading
+    filter[i] = (filter[i] * (filterFactor - 1) + filter[i - 1]) / filterFactor;
+  }
+
+  return (filter[filterOrder]); // Return the smoothed battery voltage in millivolts
+}
 
 void setup() {
 
@@ -310,8 +321,6 @@ void loop() {
       armMotor.stop();
       bucketServoSpeed = 0;
       clawServoSpeed = 0;
-      bucketServoWrite(bucketServoValue);
-      clawServoWrite(clawServoValue);
     }
     else if (currentTime % 500 == 0)
     {
